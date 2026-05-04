@@ -1,0 +1,370 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------
+// Auth / User Models (NextAuth compatible)
+// ------------------------------------------------------
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.VarChar(Max)
+  access_token      String? @db.VarChar(Max)
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.VarChar(Max)
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Otp {
+  id        String   @id @default(cuid())
+  email     String
+  otp       String
+  createdAt DateTime @default(now())
+  expires   DateTime
+
+  @@index([email])
+}
+
+// ------------------------------------------------------
+// Application Data Models
+// ------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  // Custom CryoViz fields
+  accessLevel String    @default("user") // "admin" | "user"
+  logins      Int       @default(0)
+  lastLogin   DateTime?
+
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+
+  // Relations
+  accounts Account[]
+  sessions Session[]
+
+  // Many-to-many relationship mapping assigned datasets
+  assignedDatasets Dataset[] @relation("UserAssignedDatasets")
+
+  // Added relationships for new tables
+  groups        Group[]        @relation("UserGroups")
+  notifications Notification[]
+  feedbacks     Feedback[]
+  annotations   Annotation[]   @relation("UserAnnotations")
+  mediaDocs     MediaDoc[]     @relation("UserMediaDocs")
+  views         View[]         @relation("UserViews")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([institutionId])
+}
+
+model Institution {
+  id       String @id @default(cuid())
+  name     String
+  abbr     String
+  type     String // "Industry" | "Government" | "Academic" | "Others"
+  industry String
+  address  String
+  phone    String
+  email    String
+  website  String
+  status   String // "Active" | "Inactive"
+
+  users   User[]
+  studies Study[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Study {
+  id     String  @id @default(cuid())
+  name   String
+  poNo   String?
+  status String  @default("ongoing") // "complete" | "ongoing" | "incomplete"
+
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+
+  datasets Dataset[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([institutionId])
+}
+
+model Dataset {
+  id          String  @id @default(cuid())
+  datasetId   String? @unique // UUID from Python processing
+  name        String
+  description String?
+  tissueMasks TissueMask[] // Relation to masks
+
+  // Transitioning from Institution to Study
+  institutionId String?
+  studyId       String?
+  study         Study?  @relation(fields: [studyId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  brightfieldBlobUrl String?
+  fluorescentBlobUrl String?
+  spacing            Float?
+
+  brightfieldNumZ Int?
+  brightfieldNumY Int?
+  brightfieldNumX Int?
+  fluorescentNumZ Int?
+  fluorescentNumY Int?
+  fluorescentNumX Int?
+
+  // Relations
+  assignedUsers User[] @relation("UserAssignedDatasets")
+
+  // A mapping where this dataset is the parent
+  mappingAsParent DatasetMapping? @relation("ParentDataset")
+
+  // References to mappings where this dataset is a child
+  mappingAsChildRefs DatasetChildRef[]
+
+  // References to new tables
+  groups      Group[]
+  views       View[]
+  mediaDocs   MediaDoc[]
+  annotations Annotation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([institutionId])
+  @@index([studyId])
+}
+
+model DatasetMapping {
+  id String @id @default(cuid())
+
+  parentId String  @unique
+  parent   Dataset @relation("ParentDataset", fields: [parentId], references: [id], onDelete: Cascade)
+
+  children DatasetChildRef[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Extracted from MongoDB embedded array on DatasetMapping
+model DatasetChildRef {
+  id String @id @default(cuid())
+
+  datasetMappingId String
+  datasetMapping   DatasetMapping @relation(fields: [datasetMappingId], references: [id], onDelete: Cascade)
+
+  datasetId String // References the child Dataset
+  dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  alias String?
+  order Int?    @default(0)
+
+  @@index([datasetMappingId])
+  @@index([datasetId])
+}
+
+model UploadStatus {
+  id          String    @id @default(cuid())
+  uploadId    String    @unique
+  userId      String // Email of the user who started the upload
+  status      String // "pending" | "processing" | "completed" | "failed"
+  progress    Int       @default(0) // 0-100
+  message     String
+  datasetName String
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  result      String?   @db.VarChar(Max) // Was Json, fallback for SQL Server
+  error       String?   @db.VarChar(Max)
+
+  @@index([userId])
+}
+
+model Annotation {
+  id           String @id @default(cuid())
+  annotationId String @unique // Keep original frontend ID mapping if needed
+  view         String
+  slice        Float
+  x            Float
+  y            Float
+  text         String @db.VarChar(Max)
+  instance     Int
+
+  userEmail String
+  user      User   @relation("UserAnnotations", fields: [userEmail], references: [email], onDelete: NoAction, onUpdate: NoAction)
+
+  status    String  @default("active")
+  groupName String? @default("Default Group")
+
+  datasetId String
+  dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  datetime Float
+
+  @@index([datasetId, userEmail, status])
+}
+
+model Feedback {
+  id        String @id @default(cuid())
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userEmail String
+  userName  String
+
+  type        String // 'bug' | 'feature' | 'improvement' | 'general'
+  category    String // 'ui' | 'functionality' | 'performance' | 'data' | 'other'
+  priority    String // 'low' | 'medium' | 'high' | 'critical'
+  title       String
+  description String @db.VarChar(Max)
+  rating      Int?
+
+  status String @default("pending") // 'pending' | 'in-progress' | 'resolved' | 'closed'
+
+  adminResponse   String?   @db.VarChar(Max)
+  adminResponseAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Group {
+  id          String  @id @default(cuid())
+  name        String
+  description String? @db.VarChar(Max)
+
+  userEmail String
+  user      User   @relation("UserGroups", fields: [userEmail], references: [email], onDelete: NoAction, onUpdate: NoAction)
+
+  datasetId String
+  dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, datasetId, userEmail])
+  @@index([datasetId])
+}
+
+model MediaDoc {
+  id        String @id @default(cuid())
+  name      String
+  format    String
+  URL       String @db.VarChar(Max)
+  chunkSize Int?
+  length    Int?
+
+  userEmail String
+  user      User   @relation("UserMediaDocs", fields: [userEmail], references: [email], onDelete: NoAction, onUpdate: NoAction)
+
+  uploadDate DateTime @default(now())
+
+  datasetId String
+  dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([name, datasetId])
+  @@index([datasetId])
+}
+
+model View {
+  id     String @id @default(cuid())
+  name   String
+  coords String @db.VarChar(Max) // Was Json, fallback
+  zoom   String @db.VarChar(Max) // Was Float
+  pan    String @db.VarChar(Max) // Was Json, fallback
+
+  creatorEmail String
+  creator      User   @relation("UserViews", fields: [creatorEmail], references: [email], onDelete: NoAction, onUpdate: NoAction)
+
+  datasetId String
+  dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  loadCount Int    @default(0)
+  loadStats String @default("[]") @db.VarChar(Max) // Was Json
+
+  createdAt DateTime @default(now())
+
+  @@index([datasetId])
+}
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type     String // 'upload' | 'system'
+  title    String
+  message  String @db.VarChar(Max)
+  priority String @default("medium") // 'high' | 'medium' | 'low'
+
+  read Boolean @default(false)
+
+  metadata String? @db.VarChar(Max) // Was Json
+
+  timestamp DateTime @default(now())
+
+  @@index([userId])
+}
+
+model TissueMask {
+  id        String  @id @default(cuid())
+  datasetId String
+  organId   Int
+  dataset   Dataset @relation(fields: [datasetId], references: [id])
+  organ     Organ   @relation(fields: [organId], references: [id])
+
+  @@index([datasetId])
+  @@index([organId])
+}
+
+model Organ {
+  id          Int          @id
+  name        String       @unique
+  color       String       @default("#808080") @db.NVarChar(50)
+  tissueMasks TissueMask[]
+}
