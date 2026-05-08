@@ -1,4 +1,4 @@
-import sql from "mssql";
+loginimport sql from "mssql";
 import EventEmitter from "events";
 EventEmitter.defaultMaxListeners = 20;
 import { getOrSetCache, invalidateCache } from "./redis";
@@ -274,6 +274,13 @@ export async function createUser(user: Omit<User, "id" | "logins" | "lastLogin" 
   } catch (error) {
     throw new Error(`Failed to create user: ${error}`);
   }
+}
+
+export async function updateUserLastLogin(userId: string) {
+  const pool = await getDb();
+  await pool.request()
+    .input('id', sql.NVarChar, userId)
+    .query('UPDATE [User] SET lastLogin = GETDATE() WHERE id = @id');
 }
 
 // ---------------------------------------------------------------------------
