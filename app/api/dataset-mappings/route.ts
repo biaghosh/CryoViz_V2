@@ -1,17 +1,19 @@
 // app/api/dataset-mappings/route.ts
 import { NextResponse, NextRequest } from "next/server";
 import {
-  getDatasetMappings,
   getDatasetMappingByParent,
   createDatasetMapping,
   updateDatasetMapping,
   deleteDatasetMapping,
+  // Note: getDatasetMappings needs to be implemented in your lib/models 
+  // if you want to fetch all mappings, otherwise keep it focused on parentId.
 } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type DatasetChild = { datasetId: string };
+// Type-safe interfaces matching your new SQL logic
+type DatasetChild = { datasetId: string; alias?: string; order?: number };
 
 interface CreateMappingBody {
   parentId: string;
@@ -27,25 +29,33 @@ interface UpdateMappingBody {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const parentId = searchParams.get("parentId");
-  if (parentId) {
-    const mapping = await getDatasetMappingByParent(parentId);
-    return NextResponse.json({ mapping: mapping ? { ...mapping, _id: mapping._id?.toString() } : null });
+
+  try {
+    if (parentId) {
+      const mapping = await getDatasetMappingByParent(parentId);
+      // Removed .toString() logic as SQL IDs are already strings
+      return NextResponse.json({ mapping: mapping || null });
+    }
+    
+    // If you need a 'get all' functionality, ensure getDatasetMappings() 
+    // is updated in your models to handle the SQL join.
+    return NextResponse.json({ error: "parentId is required for this endpoint" }, { status: 400 });
+  } catch (error) {
+    return NextResponse.json({ error: "Failed to fetch mappings" }, { status: 500 });
   }
-  const mappings = await getDatasetMappings();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const safeMappings = mappings.map((m: any) => ({ ...m, _id: m._id?.toString() }));
-  return NextResponse.json({ mappings: safeMappings });
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: Partial<CreateMappingBody> = await request.json();
     const { parentId, children = [] } = body;
+
     if (!parentId) {
       return NextResponse.json({ error: "parentId required" }, { status: 400 });
     }
 
-    const childIds: string[] = children.map((c) => c.datasetId);
+    // Validation logic
+    const childIds = children.map((c) => c.datasetId);
     if (childIds.includes(parentId)) {
       return NextResponse.json({ error: "Parent cannot be a child" }, { status: 400 });
     }
@@ -53,8 +63,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Duplicate child datasetIds" }, { status: 400 });
     }
 
-    const result = await createDatasetMapping({ parentId, children });
-    return NextResponse.json({ success: true, id: result.insertedId.toString() });
+    // result.insertedId is now a UUID string from the createDatasetMapping SQL function
+    const mappingId = await createDatasetMapping(parentId, children);
+    return NextResponse.json({ success: true, id: mappingId });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 400 });
@@ -65,21 +76,19 @@ export async function PUT(request: NextRequest) {
   try {
     const body: Partial<UpdateMappingBody> = await request.json();
     const { id, parentId, children } = body;
+
     if (!id) {
       return NextResponse.json({ error: "id required" }, { status: 400 });
     }
 
     if (children) {
-      const childIds: string[] = children.map((c) => c.datasetId);
+      const childIds = children.map((c) => c.datasetId);
       if (parentId && childIds.includes(parentId)) {
         return NextResponse.json({ error: "Parent cannot be a child" }, { status: 400 });
       }
-      if (new Set(childIds).size !== childIds.length) {
-        return NextResponse.json({ error: "Duplicate child datasetIds" }, { status: 400 });
-      }
     }
 
-    const result = await updateDatasetMapping(id, { parentId, children });
+    const result = await updateDatasetMapping(id, { children });
     return NextResponse.json({ success: !!result.modifiedCount });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
@@ -88,10 +97,14 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const { id } = (await request.json()) as { id?: string };
-  if (!id) {
-    return NextResponse.json({ error: "id required" }, { status: 400 });
+  try {
+    const { id } = (await request.json()) as { id?: string };
+    if (!id) {
+      return NextResponse.json({ error: "id required" }, { status: 400 });
+    }
+    const result = await deleteDatasetMapping(id);
+    return NextResponse.json({ success: !!result.deletedCount });
+  } catch (e) {
+    return NextResponse.json({ error: "Delete failed" }, { status: 400 });
   }
-  const result = await deleteDatasetMapping(id);
-  return NextResponse.json({ success: !!result.deletedCount });
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import { getDb, sql } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -23,27 +23,34 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
+    const pool = await getDb();
+    
+    // Get user ID first
+    const userResult = await pool.request()
+      .input('email', sql.NVarChar, session.user.email)
+      .query('SELECT id FROM [dbo].[User] WHERE email = @email');
 
-    const feedback = await prisma.feedback.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: 'desc' },
-      take: 50
-    });
+    const dbUser = userResult.recordset[0];
+    if (!dbUser) return NextResponse.json({ error: "User not found" }, { status: 404 });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const formattedFeedback = feedback.map((f: any) => ({
+    // Fetch top 50 feedback entries
+    const feedbackResult = await pool.request()
+      .input('userId', sql.NVarChar, dbUser.id)
+      .query(`
+        SELECT TOP 50 * FROM [dbo].[Feedback] 
+        WHERE userId = @userId 
+        ORDER BY createdAt DESC
+      `);
+
+    const formattedFeedback = feedbackResult.recordset.map((f) => ({
       ...f,
-      _id: f.id,
+      _id: f.id, // Map for frontend compatibility
     }));
 
     return NextResponse.json({ feedback: formattedFeedback });
-  } catch (error) {
+  } catch (error: any) {
     console.error("GET /api/feedback error:", error);
-    return NextResponse.json({ error: "Failed to fetch feedback" }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
@@ -58,50 +65,44 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { type, category, priority, title, description, rating }: FeedbackData = body;
 
+    // Basic Validation
     if (!type || !category || !priority || !title || !description) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    const validTypes = ['bug', 'feature', 'improvement', 'general'];
-    const validCategories = ['ui', 'functionality', 'performance', 'data', 'other'];
-    const validPriorities = ['low', 'medium', 'high', 'critical'];
+    const pool = await getDb();
+    const userResult = await pool.request()
+      .input('email', sql.NVarChar, session.user.email)
+      .query('SELECT id FROM [dbo].[User] WHERE email = @email');
 
-    if (!validTypes.includes(type)) return NextResponse.json({ error: "Invalid feedback type" }, { status: 400 });
-    if (!validCategories.includes(category)) return NextResponse.json({ error: "Invalid category" }, { status: 400 });
-    if (!validPriorities.includes(priority)) return NextResponse.json({ error: "Invalid priority" }, { status: 400 });
-    
-    if (rating !== undefined && (rating < 1 || rating > 5)) {
-      return NextResponse.json({ error: "Rating must be between 1 and 5" }, { status: 400 });
-    }
+    const dbUser = userResult.recordset[0];
+    if (!dbUser) return NextResponse.json({ error: "User not found" }, { status: 404 });
 
-    const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
+    const feedbackId = crypto.randomUUID();
 
-    const feedback = await prisma.feedback.create({
-      data: {
-        userId: user.id,
-        userEmail: session.user.email,
-        userName: session.user.name || session.user.email,
-        type,
-        category,
-        priority,
-        title: title.trim(),
-        description: description.trim(),
-        rating: rating || null,
-        status: 'pending'
-      }
-    });
+    await pool.request()
+      .input('id', sql.NVarChar, feedbackId)
+      .input('userId', sql.NVarChar, dbUser.id)
+      .input('email', sql.NVarChar, session.user.email)
+      .input('name', sql.NVarChar, session.user.name || session.user.email)
+      .input('type', sql.NVarChar, type)
+      .input('category', sql.NVarChar, category)
+      .input('priority', sql.NVarChar, priority)
+      .input('title', sql.NVarChar, title.trim())
+      .input('desc', sql.NVarChar, description.trim())
+      .input('rating', sql.Int, rating || null)
+      .input('status', sql.NVarChar, 'pending')
+      .input('now', sql.DateTime, new Date())
+      .query(`
+        INSERT INTO [dbo].[Feedback] 
+        (id, userId, userEmail, userName, [type], category, priority, title, [description], rating, [status], createdAt)
+        VALUES (@id, @userId, @email, @name, @type, @category, @priority, @title, @desc, @rating, @status, @now)
+      `);
 
-    return NextResponse.json({ 
-      success: true, 
-      id: feedback.id,
-      message: "Feedback submitted successfully"
-    });
-  } catch (error) {
+    return NextResponse.json({ success: true, id: feedbackId });
+  } catch (error: any) {
     console.error("POST /api/feedback error:", error);
-    return NextResponse.json({ error: "Failed to submit feedback" }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
@@ -109,88 +110,70 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = await request.json();
-    const { feedbackId, status, adminResponse } = body;
+    const { feedbackId, status, adminResponse } = await request.json();
+    const pool = await getDb();
 
-    if (!feedbackId || !status) {
-      return NextResponse.json({ error: "Missing feedback ID or status" }, { status: 400 });
-    }
+    // Verify Admin Status
+    const userCheck = await pool.request()
+      .input('email', sql.NVarChar, session.user.email)
+      .query('SELECT accessLevel FROM [dbo].[User] WHERE email = @email');
 
-    const validStatuses = ['pending', 'in-progress', 'resolved', 'closed'];
-    if (!validStatuses.includes(status)) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
-    }
-
-    const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-    if (!user || user.accessLevel !== 'admin') {
+    if (userCheck.recordset[0]?.accessLevel !== 'admin') {
       return NextResponse.json({ error: "Admin access required" }, { status: 403 });
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const updateData: any = {
-      status,
-    };
+    // Dynamic Update Query
+    let query = "UPDATE [dbo].[Feedback] SET [status] = @status";
+    const req = pool.request().input('status', sql.NVarChar, status).input('fid', sql.NVarChar, feedbackId);
 
     if (adminResponse) {
-      updateData.adminResponse = adminResponse;
-      updateData.adminResponseAt = new Date();
+      query += ", adminResponse = @resp, adminResponseAt = @at";
+      req.input('resp', sql.NVarChar, adminResponse).input('at', sql.DateTime, new Date());
     }
+    query += " WHERE id = @fid";
 
-    const existingFeedback = await prisma.feedback.findUnique({ where: { id: feedbackId } });
-    if (!existingFeedback) {
-      return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
-    }
-
-    await prisma.feedback.update({
-      where: { id: feedbackId },
-      data: updateData
-    });
+    await req.query(query);
 
     return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("PUT /api/feedback error:", error);
-    return NextResponse.json({ error: "Failed to update feedback" }, { status: 500 });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
-// ---------- DELETE - Delete feedback (user can delete their own, admin can delete any) ----------
+// ---------- DELETE - Delete feedback ----------
 export async function DELETE(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { searchParams } = new URL(request.url);
     const feedbackId = searchParams.get("id");
+    const pool = await getDb();
 
-    if (!feedbackId) {
-      return NextResponse.json({ error: "Feedback ID required" }, { status: 400 });
-    }
+    const userResult = await pool.request()
+      .input('email', sql.NVarChar, session.user.email)
+      .query('SELECT id, accessLevel FROM [dbo].[User] WHERE email = @email');
 
-    const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
+    const dbUser = userResult.recordset[0];
+    
+    // Fetch ownership
+    const feedbackCheck = await pool.request()
+      .input('fid', sql.NVarChar, feedbackId)
+      .query('SELECT userId FROM [dbo].[Feedback] WHERE id = @fid');
 
-    const feedback = await prisma.feedback.findUnique({ where: { id: feedbackId } });
-    if (!feedback) {
-      return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
-    }
+    const feedback = feedbackCheck.recordset[0];
+    if (!feedback) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    if (feedback.userId !== user.id && user.accessLevel !== 'admin') {
+    if (feedback.userId !== dbUser.id && dbUser.accessLevel !== 'admin') {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    await prisma.feedback.delete({ where: { id: feedbackId } });
+    await pool.request().input('fid', sql.NVarChar, feedbackId).query('DELETE FROM [dbo].[Feedback] WHERE id = @fid');
 
     return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("DELETE /api/feedback error:", error);
-    return NextResponse.json({ error: "Failed to delete feedback" }, { status: 500 });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

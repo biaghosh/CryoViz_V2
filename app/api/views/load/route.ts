@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { getDb, sql } from "@/lib/models";
 
 // ----- Helpers -----
 const toJsonErr = (e: unknown) =>
@@ -16,38 +16,65 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "id, user, and datasetId are required" }, { status: 400 });
     }
 
-    const view = await prisma.view.findFirst({
-      where: { id: id, datasetId: datasetId }
-    });
+    const pool = await getDb();
+
+    // 1. Fetch the existing view
+    const findResult = await pool.request()
+      .input('id', sql.NVarChar, id)
+      .input('dsId', sql.NVarChar, datasetId)
+      .query('SELECT * FROM [dbo].[View] WHERE id = @id AND datasetId = @dsId');
+
+    const view = findResult.recordset[0];
     
     if (!view) {
       return NextResponse.json({ error: "View not found" }, { status: 404 });
     }
 
+    // 2. Parse and update analytics logic
     const loadStats = view.loadStats ? JSON.parse(view.loadStats) : [];
-    const userStat = loadStats.find((stat: { user: string }) => stat.user === user);
-    const updatedStats = userStat
-      ? loadStats.map((stat: { user: string; count: number; lastLoad: string | Date }) =>
-          stat.user === user
-            ? { ...stat, count: stat.count + 1, lastLoad: new Date() }
-            : stat
-        )
-      : [...loadStats, { user, count: 1, lastLoad: new Date() }];
+    const now = new Date();
+    
+    const userStatIndex = loadStats.findIndex((stat: any) => stat.user === user);
+    let updatedStats;
 
-    const result = await prisma.view.update({
-      where: { id: id },
-      data: {
-        loadCount: view.loadCount + 1,
-        loadStats: JSON.stringify(updatedStats),
-      }
-    });
+    if (userStatIndex !== -1) {
+      // Update existing user entry
+      updatedStats = [...loadStats];
+      updatedStats[userStatIndex] = {
+        ...updatedStats[userStatIndex],
+        count: updatedStats[userStatIndex].count + 1,
+        lastLoad: now
+      };
+    } else {
+      // Add new user entry
+      updatedStats = [...loadStats, { user, count: 1, lastLoad: now }];
+    }
 
+    // 3. Update the record in SQL Server
+    const updateResult = await pool.request()
+      .input('id', sql.NVarChar, id)
+      .input('newCount', sql.Int, (view.loadCount || 0) + 1)
+      .input('newStats', sql.NVarChar, JSON.stringify(updatedStats))
+      .input('now', sql.DateTime, now)
+      .query(`
+        UPDATE [dbo].[View] 
+        SET loadCount = @newCount, 
+            loadStats = @newStats, 
+            updatedAt = @now 
+        OUTPUT INSERTED.*
+        WHERE id = @id
+      `);
+
+    const updatedView = updateResult.recordset[0];
+
+    // 4. Reconstruct for frontend expectations
     const reconstructedView = {
-      ...result,
-      _id: result.id,
+      ...updatedView,
+      _id: updatedView.id,
       loadStats: updatedStats,
-      coords: result.coords ? JSON.parse(result.coords) : null,
-      pan: result.pan ? JSON.parse(result.pan) : null
+      coords: updatedView.coords ? JSON.parse(updatedView.coords) : null,
+      pan: updatedView.pan ? JSON.parse(updatedView.pan) : null,
+      zoom: updatedView.zoom ? JSON.parse(updatedView.zoom) : null
     };
 
     return NextResponse.json(

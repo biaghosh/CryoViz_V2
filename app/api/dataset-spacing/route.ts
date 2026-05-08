@@ -1,29 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { getDb, sql } from "@/lib/models";
 
 export async function PUT(request: NextRequest) {
   try {
     const { datasetId, spacing } = await request.json();
 
+    // 1. Validation
     if (!datasetId || typeof spacing !== 'number' || spacing <= 0) {
-      return NextResponse.json({ error: "Invalid datasetId or spacing value" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid datasetId or spacing value" }, 
+        { status: 400 }
+      );
     }
 
-    const existingDataset = await prisma.dataset.findUnique({
-      where: { id: datasetId }
-    });
+    const pool = await getDb();
 
-    if (!existingDataset) {
+    // 2. Check if dataset exists
+    const checkResult = await pool.request()
+      .input('id', sql.NVarChar, datasetId)
+      .query('SELECT id FROM [dbo].[Dataset] WHERE id = @id');
+
+    if (checkResult.recordset.length === 0) {
       return NextResponse.json({ error: "Dataset not found" }, { status: 404 });
     }
 
-    await prisma.dataset.update({
-      where: { id: datasetId },
-      data: { spacing: spacing }
-    });
+    // 3. Update spacing
+    await pool.request()
+      .input('id', sql.NVarChar, datasetId)
+      .input('spacing', sql.Float, spacing)
+      .query('UPDATE [dbo].[Dataset] SET spacing = @spacing WHERE id = @id');
 
     return NextResponse.json({ success: true, spacing });
-  } catch (error) {
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } catch (error: any) {
+    console.error("Error updating dataset spacing:", error);
+    return NextResponse.json(
+      { error: error.message || "Internal server error" }, 
+      { status: 500 }
+    );
   }
 }

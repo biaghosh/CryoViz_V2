@@ -1,34 +1,46 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { encode } from "next-auth/jwt";
-import prisma from "@/lib/prisma";
-import { updateUserLastLogin } from "@/lib/models";
+import { getDb, sql, updateUserLastLogin } from "@/lib/models";
 
 export async function POST(req: Request) {
   try {
     const { email, otp } = await req.json();
-    
-    const match = await prisma.otp.findFirst({
-      where: { email, otp }
-    });
+    const pool = await getDb();
 
-    if (!match) {
-      return NextResponse.json({ error: "Invalid OTP" }, { status: 401 });
+    // 1. Verify OTP existence and expiration
+    const otpMatch = await pool.request()
+      .input('email', sql.NVarChar, email)
+      .input('otp', sql.NVarChar, otp)
+      .query(`
+        SELECT TOP 1 * FROM [dbo].[OTP] 
+        WHERE email = @email AND otp = @otp AND expires > GETDATE()
+      `);
+
+    if (otpMatch.recordset.length === 0) {
+      return NextResponse.json({ error: "Invalid or expired OTP" }, { status: 401 });
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    // 2. Fetch the User
+    const userResult = await pool.request()
+      .input('email', sql.NVarChar, email)
+      .query('SELECT id, name, email, accessLevel FROM [dbo].[User] WHERE email = @email');
+
+    const user = userResult.recordset[0];
     
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Update logins and lastLogin
+    // 3. Update logins and lastLogin (Using our pre-migrated helper)
     await updateUserLastLogin(user.id);
 
-    // Clean up OTP
-    await prisma.otp.deleteMany({ where: { email } });
+    // 4. Clean up used OTPs
+    await pool.request()
+      .input('email', sql.NVarChar, email)
+      .query('DELETE FROM [dbo].[OTP] WHERE email = @email');
 
-    // Create JWT token with proper NextAuth format
+    // 5. Create JWT token
     const now = Math.floor(Date.now() / 1000);
     const token = await encode({
       token: {
@@ -38,12 +50,12 @@ export async function POST(req: Request) {
         accessLevel: user.accessLevel,
         iat: now,
         exp: now + (7 * 24 * 60 * 60), // 7 days
-        jti: crypto.randomUUID(), // Add unique identifier
+        jti: crypto.randomUUID(),
       },
       secret: process.env.NEXTAUTH_SECRET!,
     });
 
-    // Set session cookie with proper NextAuth naming
+    // 6. Set session cookie
     const cookieStore = await cookies();
     const isProduction = process.env.NODE_ENV === "production";
 
@@ -51,21 +63,20 @@ export async function POST(req: Request) {
       ? "__Secure-next-auth.session-token"
       : "next-auth.session-token";
 
-    const cookieOptions = {
+    cookieStore.set(cookieName, token, {
       httpOnly: true,
       secure: isProduction,
-      sameSite: "lax" as const,
+      sameSite: "lax",
       path: "/",
-      maxAge: 7 * 24 * 60 * 60, // 7 days
-    };
-
-    cookieStore.set(cookieName, token, cookieOptions);
+      maxAge: 7 * 24 * 60 * 60,
+    });
 
     return NextResponse.json({ success: true });
-  } catch (error) {
+
+  } catch (error: any) {
     console.error("Error in verify-otp API:", error);
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : "Internal server error" },
+      { success: false, error: error.message || "Internal server error" },
       { status: 500 }
     );
   }

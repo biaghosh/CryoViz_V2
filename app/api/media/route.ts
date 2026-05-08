@@ -1,6 +1,6 @@
 import { BlobServiceClient } from "@azure/storage-blob";
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { getDb, sql } from "@/lib/models";
 
 // ----- Types -----
 type ListFile = {
@@ -20,11 +20,7 @@ type PostBody = {
   user: string;
 };
 
-// ----- Helpers -----
-const toJsonErr = (e: unknown) =>
-  e instanceof Error ? { error: e.message } : { error: "Unknown error" };
-
-// ----- GET -----
+// ----- GET - List metadata for a dataset -----
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -33,12 +29,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Dataset is required" }, { status: 400 });
     }
 
-    const docs = await prisma.mediaDoc.findMany({
-      where: { datasetId: dataset }
-    });
+    const pool = await getDb();
+    const result = await pool.request()
+      .input('datasetId', sql.NVarChar, dataset)
+      .query(`
+        SELECT id, name, format, URL 
+        FROM [dbo].[MediaDoc] 
+        WHERE datasetId = @datasetId
+      `);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const files: ListFile[] = docs.map((doc: any) => ({
+    const files: ListFile[] = result.recordset.map((doc) => ({
       id: doc.id,
       name: doc.name,
       tag: doc.format,
@@ -46,76 +46,85 @@ export async function GET(req: NextRequest) {
     }));
 
     return NextResponse.json({ files });
-  } catch (e: unknown) {
+  } catch (e: any) {
     console.error("Error listing files:", e);
-    return NextResponse.json(toJsonErr(e), { status: 500 });
+    return NextResponse.json({ error: e.message || "Unknown error" }, { status: 500 });
   }
 }
 
-// ----- POST -----
+// ----- POST - Save file metadata -----
 export async function POST(req: NextRequest) {
   try {
-    const body: unknown = await req.json();
-    if (
-      !body ||
-      typeof body !== "object" ||
-      typeof (body as PostBody).dataset !== "string" ||
-      typeof (body as PostBody).filename !== "string" ||
-      typeof (body as PostBody).format !== "string" ||
-      typeof (body as PostBody).url !== "string" ||
-      typeof (body as PostBody).user !== "string"
-    ) {
+    const body: PostBody = await req.json();
+    
+    if (!body.dataset || !body.filename || !body.format || !body.url || !body.user) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    const { dataset, filename, format, url, chunkSize, length, user } = body as PostBody;
+    const pool = await getDb();
+    const id = crypto.randomUUID();
 
-    const mediaDoc = await prisma.mediaDoc.create({
-      data: {
-        name: filename,
-        format,
-        URL: url,
-        chunkSize,
-        length,
-        userEmail: user,
-        datasetId: dataset,
-      }
+    await pool.request()
+      .input('id', sql.NVarChar, id)
+      .input('name', sql.NVarChar, body.filename)
+      .input('format', sql.NVarChar, body.format)
+      .input('url', sql.NVarChar, body.url)
+      .input('chunkSize', sql.Int, body.chunkSize || null)
+      .input('length', sql.BigInt, body.length || null) // Use BigInt for potentially large files
+      .input('userEmail', sql.NVarChar, body.user)
+      .input('datasetId', sql.NVarChar, body.dataset)
+      .query(`
+        INSERT INTO [dbo].[MediaDoc] (id, name, format, URL, chunkSize, length, userEmail, datasetId)
+        VALUES (@id, @name, @format, @url, @chunkSize, @length, @userEmail, @datasetId)
+      `);
+
+    return NextResponse.json({ 
+      message: "Metadata saved", 
+      metadata: { id, ...body } 
     });
-
-    return NextResponse.json({ message: "Metadata saved", metadata: mediaDoc });
-  } catch (e: unknown) {
+  } catch (e: any) {
     console.error("Error saving metadata:", e);
-    return NextResponse.json(toJsonErr(e), { status: 500 });
+    return NextResponse.json({ error: e.message || "Unknown error" }, { status: 500 });
   }
 }
 
-// ----- DELETE -----
+// ----- DELETE - Remove file from storage and SQL -----
 export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const dataset = searchParams.get("dataset");
     const filename = searchParams.get("filename");
+
     if (!dataset || !filename) {
       return NextResponse.json({ error: "Dataset and filename are required" }, { status: 400 });
     }
 
+    // 1. Delete from Azure Blob Storage
     const storageConn = process.env.AZURE_STORAGE_CONNECTION_STRING;
-    if (!storageConn) {
-      throw new Error("AZURE_STORAGE_CONNECTION_STRING is not set");
-    }
+    if (!storageConn) throw new Error("Storage connection string missing");
 
     const blobServiceClient = BlobServiceClient.fromConnectionString(storageConn);
     const containerClient = blobServiceClient.getContainerClient("media");
     const blobClient = containerClient.getBlockBlobClient(`${dataset}/${filename}`);
+    
     await blobClient.deleteIfExists();
 
-    const result = await prisma.mediaDoc.deleteMany({
-      where: { datasetId: dataset, name: filename }
-    });
+    // 2. Delete metadata from SQL
+    const pool = await getDb();
+    const result = await pool.request()
+      .input('datasetId', sql.NVarChar, dataset)
+      .input('name', sql.NVarChar, filename)
+      .query(`
+        DELETE FROM [dbo].[MediaDoc] 
+        WHERE datasetId = @datasetId AND name = @name
+      `);
 
-    return NextResponse.json({ message: "File and metadata deleted", deletedCount: result.count });
-  } catch (e: unknown) {
+    return NextResponse.json({ 
+      message: "File and metadata deleted", 
+      deletedCount: result.rowsAffected[0] 
+    });
+  } catch (e: any) {
     console.error("Error deleting file:", e);
-    return NextResponse.json(toJsonErr(e), { status: 500 });
+    return NextResponse.json({ error: e.message || "Unknown error" }, { status: 500 });
   }
 }

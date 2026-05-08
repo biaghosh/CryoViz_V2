@@ -1,41 +1,25 @@
 import { NextResponse, NextRequest } from "next/server";
-import { BlobServiceClient } from "@azure/storage-blob";
-import prisma from "@/lib/prisma";
-import {
-  getDatasetMappings,
-  getDatasetMappingByParent,
-  createDatasetMapping,
-  updateDatasetMapping,
-  deleteDatasetMapping,
-  getUsers,
+import { 
+  getDb, 
+  sql, 
+  getDatasetMappings, 
+  getDatasetMappingByParent, 
+  createDatasetMapping, 
+  updateDatasetMapping, 
+  deleteDatasetMapping, 
+  getUsers, 
   getDatasets,
-   createInstitution,
-   
-  createUser,
-  updateInstitution,
-  updateUser,
-  deleteInstitution,
-  deleteUser,
-  createDataset,
-  updateDataset,
-  deleteDataset,
-  updateUserDatasets,
+  getInstitutions // Ensure this is added to your lib/models.ts
 } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type DatasetChild = { datasetId: string };
+type DatasetChild = { datasetId: string; alias?: string; order?: number };
 
 interface CreateMappingBody {
   parentId: string;
   children: DatasetChild[];
-}
-
-interface UpdateMappingBody {
-  id: string;
-  parentId?: string;
-  children?: DatasetChild[];
 }
 
 export async function GET(request: NextRequest) {
@@ -43,76 +27,50 @@ export async function GET(request: NextRequest) {
   const parentId = searchParams.get("parentId");
   const datasetId = searchParams.get("datasetId");
 
-  // --- 1. Multi-Database Dataset Lookup (SQL + MongoDB) ---
+  // --- 1. Fetch Specific Dataset Details (SQL Native) ---
   if (datasetId) {
     try {
-      const cleanId = String(datasetId).trim();
-      let dataset: any = null;
-      let organList: any[] = [];
-      // A. Try SQL Server first
-      dataset = await prisma.dataset.findFirst({
-        where: {
-          OR: [
-            { id: cleanId },
-            { id: cleanId.toLowerCase() },
-            { id: cleanId.toUpperCase() }
-          ]
-      },
-      include: {
-    study: {
-      include: {
-        institution: true
-      }
-    }
-  }
-});
+      const pool = await getDb();
+      
+      // Fetch Dataset with Study and Institution info
+      const dsResult = await pool.request()
+        .input('id', sql.NVarChar, datasetId)
+        .query(`
+          SELECT d.*, s.name as studyName, i.name as institutionName
+          FROM [dbo].[Dataset] d
+          LEFT JOIN [dbo].[Study] s ON d.studyId = s.id
+          LEFT JOIN [dbo].[Institution] i ON s.institutionId = i.id
+          WHERE d.id = @id OR d.datasetId = @id
+        `);
 
-     if (dataset) {
-          // SQL PATH: Fetch organs AND their specific blob URLs
-          const masks: any[] = await prisma.$queryRawUnsafe(`
-            SELECT 
-              o.name, 
-              o.color,
-              tm.tissueMaskBlobUrl 
-            FROM TissueMask tm
-            JOIN Organ o ON tm.organId = o.id
-            WHERE tm.datasetId = '${dataset.id}'
-          `);
-
-          // Map the results into objects instead of just strings
-          organList = masks.map((m: any) => ({
-            name: m.name,
-           color: m.color || "#808080", // Fallback if color is missing
-            blobUrl: m.tissueMaskBlobUrl
-          })).filter(m => m.name); // Ensure name exists
-        } else {
-        // B. Fallback to MongoDB
-        const allMongoDatasets = await getDatasets();
-        dataset = allMongoDatasets.find((d: any) => 
-          d._id?.toString() === cleanId || d.id === cleanId
-        );
-
-        if (dataset) {
-          organList = dataset.organs || [];
-        }
-      }
+      const dataset = dsResult.recordset[0];
 
       if (!dataset) {
         return NextResponse.json({ dataset: null, error: "Dataset not found" }, { status: 404 });
       }
 
-      // WRAP the response in a 'dataset' key to match your frontend query result.dataset
+      // Fetch associated TissueMasks (Organs)
+      const maskResult = await pool.request()
+        .input('did', sql.NVarChar, dataset.id)
+        .query(`
+          SELECT o.name, o.color, tm.tissueMaskBlobUrl as blobUrl
+          FROM [dbo].[TissueMask] tm
+          JOIN [dbo].[Organ] o ON tm.organId = o.id
+          WHERE tm.datasetId = @did
+        `);
+
       return NextResponse.json({ 
         dataset: {
           ...dataset,
-          // Safety: ensure both 'id' and '_id' exist for frontend viewers
-          id: dataset.id || dataset._id?.toString(),
-          _id: dataset._id?.toString() || dataset.id,
-          organs: organList 
+          organs: maskResult.recordset.map((m: any) => ({ // Add : any here
+            name: m.name,
+            color: m.color || "#808080",
+            blobUrl: m.blobUrl
+          }))
         }
-      });
-
-    } catch (e: any) {
+});
+    } catch (e) {
+      console.error("Admin GET Dataset Error:", e);
       return NextResponse.json({ error: "Failed to load dataset details" }, { status: 500 });
     }
   }
@@ -120,7 +78,7 @@ export async function GET(request: NextRequest) {
   // --- 2. Query for a specific Mapping ---
   if (parentId) {
     const mapping = await getDatasetMappingByParent(parentId);
-    return NextResponse.json({ mapping: mapping ? { ...mapping, _id: mapping._id?.toString() } : null });
+    return NextResponse.json({ mapping });
   }
 
   // --- 3. SIDEBAR BASE DATA ---
@@ -129,56 +87,58 @@ export async function GET(request: NextRequest) {
       getUsers(),
       getDatasets(),
       getDatasetMappings(),
-      prisma.institution.findMany() 
+      getInstitutions() // Refactor this function in lib/models.ts to use SQL
     ]);
 
-    // Normalize IDs for the dataset list so the sidebar can find them
-    const normalizedDatasets = (Array.isArray(datasets) ? datasets : []).map((d: any) => ({
-      ...d,
-      id: d.id || d._id?.toString()
-    }));
-
     return NextResponse.json({
-      users: Array.isArray(users) ? users : [],
-      datasets: normalizedDatasets,
-      mappings: Array.isArray(mappings) ? mappings : [],
-      institutions: Array.isArray(institutions) ? institutions : []
+      users: users || [],
+      datasets: datasets || [],
+      mappings: mappings || [],
+      institutions: institutions || []
     });
   } catch (err) {
+    console.error("Admin Sidebar Data Error:", err);
     return NextResponse.json({ users: [], datasets: [], mappings: [], institutions: [] });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body: Partial<CreateMappingBody> = await request.json();
+    const body: CreateMappingBody = await request.json();
     const { parentId, children = [] } = body;
+    
     if (!parentId) return NextResponse.json({ error: "parentId required" }, { status: 400 });
-    const result = await createDatasetMapping({ parentId, children });
-    return NextResponse.json({ success: true, id: result.insertedId.toString() });
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown error" }, { status: 400 });
+    
+    const newMappingId = await createDatasetMapping(parentId, children);
+    return NextResponse.json({ success: true, id: newMappingId });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message || "Unknown error" }, { status: 400 });
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
-    const body: Partial<UpdateMappingBody> = await request.json();
-    const { id, parentId, children } = body;
+    const body = await request.json();
+    const { id, children } = body; // Remove parentId here if not used
+    
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
-    const result = await updateDatasetMapping(id, { parentId, children });
-    return NextResponse.json({ success: !!result.modifiedCount });
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown error" }, { status: 400 });
+    
+    // Only pass what the function expects
+    await updateDatasetMapping(id, { children }); 
+    
+    return NextResponse.json({ success: true });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message || "Unknown error" }, { status: 400 });
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
-    const { id } = (await request.json()) as { id?: string };
+    const { id } = await request.json();
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
-    const result = await deleteDatasetMapping(id);
-    return NextResponse.json({ success: !!result.deletedCount });
+    
+    await deleteDatasetMapping(id);
+    return NextResponse.json({ success: true });
   } catch (e) {
     return NextResponse.json({ error: "Delete failed" }, { status: 400 });
   }

@@ -1,17 +1,101 @@
-import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { NextRequest, NextResponse } from "next/server";
+import { getDb, sql } from "@/lib/models";
 
-export async function POST(req: Request) {
+export const dynamic = "force-dynamic";
+
+export async function GET(req: NextRequest) {
   try {
-    const { email } = await req.json();
+    const { searchParams } = new URL(req.url);
+    const email = searchParams.get("email");
 
-    const user = await prisma.user.findUnique({
-      where: { email }
+    if (!email) {
+      return NextResponse.json({ error: "Email is required" }, { status: 400 });
+    }
+
+    const pool = await getDb();
+    
+    // Using a JOIN to get the institution name from the related table
+    const result = await pool.request()
+      .input('email', sql.NVarChar, email.toLowerCase().trim())
+      .query(`
+        SELECT 
+          u.id, 
+          u.email, 
+          u.name, 
+          u.accessLevel, 
+          i.name as institution 
+        FROM [dbo].[User] u
+        LEFT JOIN [dbo].[Institution] i ON u.institutionId = i.id
+        WHERE u.email = @email
+      `);
+
+    const user = result.recordset[0];
+
+    if (!user) {
+      return NextResponse.json({ 
+        exists: false, 
+        message: "User not found" 
+      }, { status: 404 });
+    }
+
+    return NextResponse.json({
+      exists: true,
+      user
     });
 
-    return NextResponse.json({ exists: !!user });
-  } catch (error: unknown) {
-    console.error("Check user error:", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to check user" }, { status: 500 });
+  } catch (error: any) {
+    console.error("Check-user GET error:", error);
+    return NextResponse.json({ 
+      error: "Internal server error", 
+      details: error.message 
+    }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const { email } = await request.json();
+
+    if (!email) {
+      return NextResponse.json({ error: "Email is required" }, { status: 400 });
+    }
+
+    const pool = await getDb();
+
+    // Matching the JOIN logic in the POST method as well
+    const result = await pool.request()
+      .input("email", sql.NVarChar, email.toLowerCase().trim())
+      .query(`
+        SELECT 
+          u.id, 
+          u.email, 
+          u.name, 
+          u.accessLevel, 
+          i.name as institution 
+        FROM [dbo].[User] u
+        LEFT JOIN [dbo].[Institution] i ON u.institutionId = i.id
+        WHERE u.email = @email
+      `);
+
+    const user = result.recordset[0];
+
+    if (user) {
+      return NextResponse.json({ 
+        exists: true,
+        user 
+      }, { status: 200 });
+    }
+
+    return NextResponse.json({ 
+      exists: false,
+      message: "User not found"
+    }, { status: 200 });
+
+  } catch (error: any) {
+    console.error("Check-user POST error:", error);
+    return NextResponse.json({ 
+      error: "Internal Server Error", 
+      details: error.message 
+    }, { status: 500 });
   }
 }
