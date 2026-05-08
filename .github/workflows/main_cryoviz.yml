@@ -26,6 +26,8 @@ jobs:
         run: |
           npm install
           npm run build --if-present
+          cp -r public .next/standalone/public
+          cp -r .next/static .next/standalone/.next/static
         env:
           # Include build-time environment variables here if needed
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
