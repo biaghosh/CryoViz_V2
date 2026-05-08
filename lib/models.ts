@@ -1,4 +1,4 @@
-loginimport sql from "mssql";
+import sql from "mssql";
 import EventEmitter from "events";
 EventEmitter.defaultMaxListeners = 20;
 import { getOrSetCache, invalidateCache } from "./redis";
