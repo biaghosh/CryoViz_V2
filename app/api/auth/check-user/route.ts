@@ -53,15 +53,17 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(request: Request) {
+  console.log(">>> [API/CHECK-USER] POST request received");
   try {
     const { email } = await request.json();
+    console.log(`>>> [API/CHECK-USER] Attempting DB connection for: ${email}`);
 
     if (!email) {
       return NextResponse.json({ error: "Email is required" }, { status: 400 });
     }
 
     const pool = await getDb();
-
+    console.log(">>> [API/CHECK-USER] DB Pool acquired successfully");
     // Matching the JOIN logic in the POST method as well
     const result = await pool.request()
       .input("email", sql.NVarChar, email.toLowerCase().trim())
@@ -76,7 +78,7 @@ export async function POST(request: Request) {
         LEFT JOIN [dbo].[Institution] i ON u.institutionId = i.id
         WHERE u.email = @email
       `);
-
+      console.log(`>>> [API/CHECK-USER] Query complete. Found ${result.recordset.length} user(s)`);
     const user = result.recordset[0];
 
     if (user) {
