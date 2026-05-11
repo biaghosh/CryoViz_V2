@@ -5,10 +5,21 @@ import { getOrSetCache, invalidateCache } from "./redis";
 import { v4 as uuidv4 } from 'uuid';
 
 //remove these lines after correcting redis
-await invalidateCache('datasets_all');
-await invalidateCache('users_all');
-await invalidateCache('institution_all');
+async function clearInitialCache() {
+  try {
+    console.log(">>> [DB/INIT] Attempting to clear initial cache...");
+    await invalidateCache('datasets_all');
+    await invalidateCache('users_all');
+    await invalidateCache('institution_all');
+    console.log(">>> [DB/INIT] Cache cleared successfully.");
+  } catch (error: any) {
+    console.error(">>> [DB/INIT] Redis Cache clear failed (Non-critical):", error.message);
+    // We catch and swallow this so the DB connection can still proceed
+  }
+}
 
+// Trigger the cleanup without blocking the module export
+clearInitialCache();
 
 // ---------------------------------------------------------------------------
 // GLOBAL TYPE AUGMENTATIONS (Fixes frontend red lines for _id, institution, study)
