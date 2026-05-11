@@ -97,7 +97,8 @@ export async function POST(request: Request) {
     console.error("Check-user POST error:", error);
     return NextResponse.json({ 
       error: "Internal Server Error", 
-      details: error.message 
+      details: error.message,
+      code: error.code || "UNKNOWN_ERR"
     }, { status: 500 });
   }
 }
