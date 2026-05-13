@@ -7,18 +7,24 @@ import { v4 as uuidv4 } from 'uuid';
 //remove these lines after correcting redis
 async function clearInitialCache() {
   try {
-    console.log(">>> [DB/INIT] Attempting to clear initial cache...");
+    // If REDIS_URL isn't set, don't even try
+    if (!process.env.REDIS_URL) {
+      console.warn(">>> [REDIS] No REDIS_URL found. Skipping cache clear.");
+      return;
+    }
+
+    console.log(">>> [REDIS] Attempting to clear initial cache...");
     await invalidateCache('datasets_all');
     await invalidateCache('users_all');
     await invalidateCache('institution_all');
-    console.log(">>> [DB/INIT] Cache cleared successfully.");
+    console.log(">>> [REDIS] Cache cleared successfully.");
   } catch (error: any) {
-    console.error(">>> [DB/INIT] Redis Cache clear failed (Non-critical):", error.message);
-    // We catch and swallow this so the DB connection can still proceed
+    // This catches connection timeouts or "Free tier limit reached" errors
+    console.error(">>> [REDIS] Cache clear failed (Non-critical):", error.message);
   }
 }
 
-// Trigger the cleanup without blocking the module export
+// Call it
 clearInitialCache();
 
 // ---------------------------------------------------------------------------
