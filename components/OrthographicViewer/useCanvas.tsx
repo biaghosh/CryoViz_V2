@@ -189,12 +189,12 @@ export default function useCanvas(
     });
   }, []);
 
-  const drawAll = useCallback(() => {
+const drawAll = useCallback(() => {
     if (!loaded.current) return;
     const views = [
-      { key: "xy", ctx: canvasXY.current?.getContext("2d"), slice: coords.z, slices: slicesXY.current, pan: panRefXY.current, zoom: zoomRefXY.current, cross: [coords.x, coords.y], mData: measureData.XY },
-      { key: "xz", ctx: canvasXZ.current?.getContext("2d"), slice: coords.y, slices: slicesXZ.current, pan: panRefXZ.current, zoom: zoomRefXZ.current, cross: [coords.x, coords.z], mData: measureData.XZ },
-      { key: "yz", ctx: canvasYZ.current?.getContext("2d"), slice: coords.x, slices: slicesYZ.current, pan: panRefYZ.current, zoom: zoomRefYZ.current, cross: [coords.y, coords.z], mData: measureData.YZ },
+      { key: "xy", ctx: canvasXY.current?.getContext("2d", { willReadFrequently: true }), slice: coords.z, slices: slicesXY.current, pan: panRefXY.current, zoom: zoomRefXY.current, cross: [coords.x, coords.y], mData: measureData.XY },
+      { key: "xz", ctx: canvasXZ.current?.getContext("2d", { willReadFrequently: true }), slice: coords.y, slices: slicesXZ.current, pan: panRefXZ.current, zoom: zoomRefXZ.current, cross: [coords.x, coords.z], mData: measureData.XZ },
+      { key: "yz", ctx: canvasYZ.current?.getContext("2d", { willReadFrequently: true }), slice: coords.x, slices: slicesYZ.current, pan: panRefYZ.current, zoom: zoomRefYZ.current, cross: [coords.y, coords.z], mData: measureData.YZ },
     ];
 
     views.forEach(v => {
@@ -295,7 +295,7 @@ export default function useCanvas(
   const handleMouseUp = useCallback(() => { isPanningRef.current = null; }, []);
 
   const handleMouseMoveColor = useCallback((e: React.MouseEvent<HTMLCanvasElement>, view: "XY" | "XZ" | "YZ") => {
-    const ctx = { XY: canvasXY, XZ: canvasXZ, YZ: canvasYZ }[view].current?.getContext("2d");
+    const ctx = { XY: canvasXY, XZ: canvasXZ, YZ: canvasYZ }[view].current?.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pan = { XY: panXY, XZ: panXZ, YZ: panYZ }[view];
