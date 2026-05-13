@@ -105,6 +105,21 @@ const currentUser = users.find(
 });
 
   // 3. Load all mappings
+// const { data: mappingData, isLoading: isLoadingMappings } = useQuery<{ mappings: DatasetMapping[] }>({
+//   queryKey: ["datasetMappings-sidebar"],
+//   enabled: status === "authenticated",
+//   staleTime: 5 * 60 * 1000,
+//   queryFn: async () => {
+//     const res = await fetch("/api/dataset-mappings");
+//     if (!res.ok) throw new Error("Failed to fetch dataset mappings");
+//     const result = await res.json();
+    
+//     // FIXED: Ensure mappings is always an array
+//     return {
+//       mappings: Array.isArray(result?.mappings) ? result.mappings : []
+//     };
+//   },
+// });
 const { data: mappingData, isLoading: isLoadingMappings } = useQuery<{ mappings: DatasetMapping[] }>({
   // Add session ID to queryKey to ensure it's tied to a specific login instance
   queryKey: ["datasetMappings-sidebar", session?.user?.email], 
@@ -124,17 +139,30 @@ const { data: mappingData, isLoading: isLoadingMappings } = useQuery<{ mappings:
 });
 
   // Auth Gate
+  // React.useEffect(() => {
+  //   if (status === "loading") return;
+  //   if (status === "unauthenticated") {
+  //     setLoadingGate(false);
+  //     return;
+  //   }
+  //   if (adminData?.currentUser) {
+  //     setUserAccessLevel(adminData.currentUser.accessLevel);
+  //     setLoadingGate(false);
+  //   }
+  // }, [status, adminData]);
   React.useEffect(() => {
-    if (status === "loading") return;
-    if (status === "unauthenticated") {
-      setLoadingGate(false);
-      return;
-    }
-    if (adminData?.currentUser) {
-      setUserAccessLevel(adminData.currentUser.accessLevel);
-      setLoadingGate(false);
-    }
-  }, [status, adminData]);
+  // Wait until NextAuth is finished loading
+  if (status === "loading") return;
+
+  // Only release the gate if we are confirmed unauthenticated 
+  // OR if we are authenticated AND the admin check is finished.
+  if (status === "unauthenticated") {
+    setLoadingGate(false);
+  } else if (status === "authenticated" && adminData?.currentUser) {
+    setUserAccessLevel(adminData.currentUser.accessLevel);
+    setLoadingGate(false);
+  }
+}, [status, adminData]);
 
   const loading = loadingGate || isLoadingAdmin || isLoadingMappings;
 
@@ -175,7 +203,7 @@ const { data: mappingData, isLoading: isLoadingMappings } = useQuery<{ mappings:
   const mappingChildren = React.useMemo(() => {
     if (!activeMapping) return [];
     return (activeMapping.children || []).map((c) => {
-      const d = datasetById.get(c.datasetId) || null;
+      const d = datasetById.get(c.datasetId || "") || null;
       const isActive = c.datasetId === activeDatasetId;
       return {
         id: c.datasetId,
@@ -287,7 +315,7 @@ const mappingNavItems = React.useMemo(() => {
   const userData = {
     name: session?.user?.name || session?.user?.email || "User",
     email: session?.user?.email || "",
-    avatar: session?.user?.image || "",
+    avatar: (session?.user as any)?.image || "",
     accessLevel: userAccessLevel || "user",
   };
 
@@ -331,7 +359,7 @@ const mappingNavItems = React.useMemo(() => {
 
       <SidebarContent>
        <NavMain 
-  items={navMain} 
+  items={navMain as any}
   onMaskToggle={(organName: string, isVisible: boolean) => {
     // 1. Find the specific organ object from our dataset
     const organData = currentDataset?.organs?.find(
