@@ -18,26 +18,27 @@ function OTPVerifyInner() {
   const searchParams = useSearchParams(); // must be within Suspense
   const email = searchParams.get("email") ?? "";
   const router = useRouter();
-
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
+  e.preventDefault();
+  setLoading(true);
+  setError("");
 
-    const res = await signIn("credentials", {
-      email,
-      otp,
-      callbackUrl: "/users_datasets",
-    });
+  const res = await signIn("credentials", {
+    email,
+    otp,
+    redirect: false, // <--- Add this to stop the "hard" reload
+  });
 
+  if (res?.ok && !res?.error) {
+    // Manually push the route. This allows the NextAuth 
+    // client-side provider to update its internal state first.
+    router.push("/users_datasets");
+    router.refresh(); 
+  } else {
     setLoading(false);
-
-    if (res?.ok && !res?.error) {
-      router.push("/users_datasets");
-    } else {
-      setError(res?.error || "Invalid OTP");
-    }
-  };
+    setError(res?.error || "Invalid OTP");
+  }
+};
 
   return (
     <div className="flex flex-col gap-6 max-w-md mx-auto mt-20">
