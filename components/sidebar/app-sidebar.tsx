@@ -106,15 +106,17 @@ const currentUser = users.find(
 
   // 3. Load all mappings
 const { data: mappingData, isLoading: isLoadingMappings } = useQuery<{ mappings: DatasetMapping[] }>({
-  queryKey: ["datasetMappings-sidebar"],
-  enabled: status === "authenticated",
+  // Add session ID to queryKey to ensure it's tied to a specific login instance
+  queryKey: ["datasetMappings-sidebar", session?.user?.email], 
+  // ONLY run if we have a valid session and an email
+  enabled: !!session?.user?.email && status === "authenticated",
   staleTime: 5 * 60 * 1000,
+  // Add this to prevent retries on 400 errors during login transitions
+  retry: false, 
   queryFn: async () => {
     const res = await fetch("/api/dataset-mappings");
     if (!res.ok) throw new Error("Failed to fetch dataset mappings");
     const result = await res.json();
-    
-    // FIXED: Ensure mappings is always an array
     return {
       mappings: Array.isArray(result?.mappings) ? result.mappings : []
     };
