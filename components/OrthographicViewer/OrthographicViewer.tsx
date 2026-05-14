@@ -14,6 +14,7 @@ import useMeasurements from "./useMeasurements";
 import MediaControlPanel from "./MediaControlPanel";
 import { ModalitySwitcher, type Modality } from "@/components/ModalitySwitcher";
 import XYZControls from "./XYZControls";
+import { MaskOpacityControl } from "./MaskOpacityControl";
 
 const ORGAN_METADATA: Record<string, { color: string; label: string }> = {
   "0": { color: '#000000', label: 'Background' },
@@ -80,8 +81,8 @@ type ViewerProps = {
   activeMasks?: Record<string, any>;
 };
 
-// --- Mask Overlay Helper Component ---
-const MaskOverlay = ({ activeMasks, view, slice, currentNumZ, currentNumY, currentNumX, pan, zoom }: any) => {
+const MaskOverlay = ({ activeMasks, view, slice, currentNumZ, currentNumY, currentNumX, pan, zoom, globalOpacity }: any) => {
+  // 1. Define activeEntries at the top level of the component
   const activeEntries = Object.entries(activeMasks || {}).filter(([_, val]) => val !== false);
   if (activeEntries.length === 0) return null;
 
@@ -95,7 +96,9 @@ const MaskOverlay = ({ activeMasks, view, slice, currentNumZ, currentNumY, curre
   return (
     <>
       {activeEntries.map(([maskName, data]: [string, any]) => {
+        // --- Variables must be defined INSIDE the map function ---
         const blobUrl = typeof data === 'string' ? data : data.blobUrl;
+        
         const metaEntry = Object.values(ORGAN_METADATA).find(
           (m) => m.label.toLowerCase() === maskName.toLowerCase()
         );
@@ -108,7 +111,11 @@ const MaskOverlay = ({ activeMasks, view, slice, currentNumZ, currentNumY, curre
         const mappedSlice = Math.floor(ratio * (maskCounts[v] - 1));
         const safeSlice = Math.max(0, Math.min(mappedSlice, maskCounts[v] - 1));
         const sliceStr = String(safeSlice).padStart(3, '0');
+        
+        // This defines finalUrl for use below
         const finalUrl = `${blobUrl}/${v}/${sliceStr}.png`;
+
+        const isOutlineOnly = globalOpacity < 0.2;
 
         const maskStyle: any = {
           position: "absolute",
@@ -124,12 +131,20 @@ const MaskOverlay = ({ activeMasks, view, slice, currentNumZ, currentNumY, curre
           WebkitMaskRepeat: "no-repeat",
           WebkitMaskMode: "luminance",
           maskMode: "luminance",
-          opacity: 0.3, 
+          
+          // Use high base opacity to keep the drop-shadow visible
+          opacity: Math.max(globalOpacity, 0.7), 
+          
+          // Edge detection logic: high contrast creates the "outline" feel
+          filter: isOutlineOnly 
+            ? `contrast(500%) brightness(50%) drop-shadow(0 0 1px ${organColor})` 
+            : `opacity(${globalOpacity})`,
+          
           mixBlendMode: "screen",
           pointerEvents: "none",
-          // Syncing logic with Canvas
           transformOrigin: "0 0",
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transition: "filter 0.1s ease-out, opacity 0.1s ease-out",
         };
 
         return (
@@ -157,7 +172,8 @@ export default function OrthographicViewer(props: ViewerProps) {
   const hasBrightfield = Boolean(brightfieldBlobUrl && brightfieldNumZ);
   const hasFluorescent = Boolean(fluorescentBlobUrl && fluorescentNumZ);
   const defaultModality: Modality = hasBrightfield ? "brightfield" : "fluorescent";
-  const [currentModality, setCurrentModality] = useState<Modality>(defaultModality);
+  const [currentModality, setCurrentModality] = useState<Modality>(defaultModality);  
+  const [maskOpacity, setMaskOpacity] = useState(0.5);
 
   const currentBlobUrl = currentModality === "brightfield" ? brightfieldBlobUrl : fluorescentBlobUrl;
   const currentNumZ = currentModality === "brightfield" ? brightfieldNumZ : fluorescentNumZ;
@@ -233,6 +249,8 @@ export default function OrthographicViewer(props: ViewerProps) {
     currentNumX || 0
   );
 
+  
+
   const { handleMeasureClick, handleToggleMeasure } = useMeasurements(
     {
       XY: canvasXY as React.RefObject<HTMLCanvasElement>,
@@ -307,7 +325,7 @@ export default function OrthographicViewer(props: ViewerProps) {
               onContextMenu={handleContextMenu}
               className="block max-w-full max-h-full relative z-[1]"
             />
-            <MaskOverlay activeMasks={activeMasks} view="xy" slice={coords.z} currentNumZ={currentNumZ} pan={panXY} zoom={zoomXY} />
+            <MaskOverlay activeMasks={activeMasks} view="xy" slice={coords.z} currentNumZ={currentNumZ} pan={panXY} zoom={zoomXY} globalOpacity={maskOpacity}/>
           </div>
         </div>
 
@@ -330,7 +348,7 @@ export default function OrthographicViewer(props: ViewerProps) {
                 onContextMenu={handleContextMenu}
                 className="block max-w-full max-h-full relative z-[1]"
               />
-              <MaskOverlay activeMasks={activeMasks} view="xz" slice={coords.y} currentNumY={currentNumY} pan={panXZ} zoom={zoomXZ} />
+              <MaskOverlay activeMasks={activeMasks} view="xz" slice={coords.y} currentNumY={currentNumY} pan={panXZ} zoom={zoomXZ} globalOpacity={maskOpacity}/>
             </div>
           </div>
 
@@ -352,7 +370,7 @@ export default function OrthographicViewer(props: ViewerProps) {
                 onContextMenu={handleContextMenu}
                 className="block max-w-full max-h-full relative z-[1]"
               />
-              <MaskOverlay activeMasks={activeMasks} view="yz" slice={coords.x} currentNumX={currentNumX} pan={panYZ} zoom={zoomYZ} />
+              <MaskOverlay activeMasks={activeMasks} view="yz" slice={coords.x} currentNumX={currentNumX} pan={panYZ} zoom={zoomYZ} globalOpacity={maskOpacity}/>
             </div>
           </div>
         </div>
@@ -371,6 +389,8 @@ export default function OrthographicViewer(props: ViewerProps) {
       <MeasureToggleButton isMeasuring={isMeasuring} onToggle={handleToggleMeasureWrapper} />
       <XYZControls coords={coords} onChange={handleSlider} limits={{ x: (currentNumX || 1)-1, y: (currentNumY || 1)-1, z: (currentNumZ || 1)-1 }} onReset={resetView} />
       <ModalitySwitcher hasBrightfield={hasBrightfield} hasFluorescent={hasFluorescent} currentModality={currentModality} onModalityChange={setCurrentModality} className="absolute top-4 left-4 z-10" />
+      {Object.values(activeMasks).some(v => v !== false) && (<MaskOpacityControl opacity={maskOpacity} onOpacityChange={setMaskOpacity} className="absolute top-28 left-4 z-10" />
+  )}
       <ViewControlPanel coords={coords} zoom={{ XY: zoomXY, XZ: zoomXZ, YZ: zoomYZ }} pan={{ XY: panXY, XZ: panXZ, YZ: panYZ }} setCoords={setCoords} setZoom={(z) => { setZoomXY(z.XY); setZoomXZ(z.XZ); setZoomYZ(z.YZ); }} setPan={(p) => { setPanXY(p.XY); setPanXZ(p.XZ); setPanYZ(p.YZ); }} canvasXY={canvasXY as React.RefObject<HTMLCanvasElement>} canvasXZ={canvasXZ as React.RefObject<HTMLCanvasElement>} canvasYZ={canvasYZ as React.RefObject<HTMLCanvasElement>} setErrorMessage={setErrorMessage} datasetId={datasetId} />
       <MediaControlPanel datasetId={datasetId} setErrorMessage={setErrorMessage} />
     </div>
