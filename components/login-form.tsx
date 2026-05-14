@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import Image from "next/image";
 
 export function LoginForm({
   className,
@@ -108,7 +109,16 @@ export function LoginForm({
               {loading ? "Sending OTP..." : "Login via Email OTP"}
             </Button>
           </div>
-
+          {/* Logo Section */}
+          <div className="flex justify-center -mb-2 mt-2">
+            <Image 
+              src="/images/biv-logo.png" 
+              alt="BioInvision Logo" 
+              width={120} // Increased size
+              height={120} 
+              className="object-contain" // Removed grayscale and hover effects
+            />
+          </div>
           {message && (
             <p className="text-sm text-red-500 text-center -mt-3">{message}</p>
           )}
