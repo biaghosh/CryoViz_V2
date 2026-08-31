@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
@@ -23,54 +24,27 @@ export function LoginForm({
     setLoading(true);
     setMessage("");
 
-    // Step 1: Check if user exists
-    const resCheck = await fetch("/api/auth/check-user", {
-      method: "POST",
-      body: JSON.stringify({ email }),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    let check;
     try {
-      check = await resCheck.json();
-    } catch {
-      setLoading(false);
-      setMessage("Server connection failed during user check.");
-      return;
-    }
-
-    if (!resCheck.ok || !check.exists) {
-      setLoading(false);
-      setMessage(
-        check?.error || "User does not exist. Please contact inquiry@bioinvision.com. or Signup to send request for Access."
-      );
-      return;
-    }
-
-    // Step 2: Request OTP using direct API (no NextAuth involvement)
-    try {
-      const otpRes = await fetch("/api/auth/request-otp", {
-        method: "POST",
-        body: JSON.stringify({ email }),
-        headers: { "Content-Type": "application/json" },
+      // Attempt to sign in directly with email
+      const result = await signIn("credentials", {
+        email: email.toLowerCase().trim(),
+        redirect: false,
       });
 
-      setLoading(false);
+      if (result?.error) {
+        setMessage("User does not exist. Please contact inquiry@bioinvision.com or Sign up to request access.");
+        setLoading(false);
+        return;
+      }
 
-      if (otpRes.ok) {
-        router.push(`/auth/verify?email=${encodeURIComponent(email)}`);
-      } else {
-        let errorMsg = "Error sending OTP. Try again.";
-        try {
-          const errorData = await otpRes.json();
-          if (errorData.error) errorMsg = errorData.error;
-        } catch { /* ignore JSON parse error */ }
-        setMessage(errorMsg);
+      if (result?.ok) {
+        // Redirect to home page on successful login
+        router.push("/home");
       }
     } catch (err: unknown) {
-      console.error("LoginForm error:", err);
+      console.error("Login error:", err);
+      setMessage("An error occurred during login. Please try again.");
       setLoading(false);
-      setMessage("Network error. Please try again.");
     }
   };
 
@@ -106,7 +80,7 @@ export function LoginForm({
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Sending OTP..." : "Login via Email OTP"}
+              {loading ? "Logging in..." : "Login"}
             </Button>
           </div>
           {/* Logo Section */}
@@ -114,9 +88,9 @@ export function LoginForm({
             <Image 
               src="/images/biv-logo.png" 
               alt="BioInvision Logo" 
-              width={120} // Increased size
+              width={120}
               height={120} 
-              className="object-contain" // Removed grayscale and hover effects
+              className="object-contain"
             />
           </div>
           {message && (
