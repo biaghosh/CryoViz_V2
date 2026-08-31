@@ -21,19 +21,33 @@ declare module "next-auth" {
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
-      name: "Email",
+      name: "OTP",
       credentials: {
-        email: { label: "Email", type: "email" }
+        email: { label: "Email", type: "email" },
+        otp: { label: "OTP", type: "text" }
       },
       async authorize(credentials) {
-        if (!credentials?.email) return null;
+        if (!credentials?.email || !credentials?.otp) return null;
 
         try {
           const pool = await getDb();
           const email = credentials.email.toLowerCase().trim();
           
-          // Fetch User with Institution Join from [dbo].[User]
-          // Check if user exists in the Users table
+          // 1. Check for valid OTP in [dbo].[Otp]
+          // Schema verified: columns are 'createdAt' and 'expires'
+          const otpCheck = await pool.request()
+            .input('email', sql.NVarChar, email)
+            .input('otp', sql.NVarChar, credentials.otp.trim())
+            .query(`
+              SELECT TOP 1 id FROM [dbo].[Otp] 
+              WHERE email = @email AND otp = @otp AND expires > GETDATE()
+              ORDER BY createdAt DESC
+            `);
+
+          if (otpCheck.recordset.length === 0) return null;
+
+          // 2. Fetch User with Institution Join from [dbo].[User]
+          // Schema verified: [User] has 'institutionId', [Institution] has 'name'
           const userCheck = await pool.request()
             .input('email', sql.NVarChar, email)
             .query(`
