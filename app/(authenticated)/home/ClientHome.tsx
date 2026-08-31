@@ -40,7 +40,6 @@ export default function ClientHome() {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const imageContainerRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
   
   const searchParams = useSearchParams();
   const datasetId = searchParams.get("datasetId");
@@ -367,18 +366,16 @@ useEffect(() => {
                         </>
                       ) : (
                         <div className="flex items-center justify-center h-full bg-gray-100 dark:bg-gray-900">
-                          <video
-                            ref={videoRef}
-                            controls
-                            className="h-full max-w-full object-contain"
-                            style={{ maxHeight: "100%", maxWidth: "100%" }}
-                          >
-                            <source
-                              src="https://bivlargefiles.blob.core.windows.net/videos/cyovizweb_movie.mp4"
-                              type="video/mp4"
-                            />
-                            Your browser does not support the video tag.
-                          </video>
+                          <iframe
+                            width="100%"
+                            height="100%"
+                            src="https://www.youtube.com/embed/7cCXCLuLRP8?si=be1ZrOe1T0g7LKtO"
+                            title="CryoViz Movie"
+                            frameBorder="0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            allowFullScreen
+                            className="rounded-lg"
+                          ></iframe>
                         </div>
                       )}
                     </div>
