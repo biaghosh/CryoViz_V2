@@ -28,7 +28,7 @@ export default function ClientHome() {
 
 
 
-  const [activeTab, setActiveTab] = useState<"orthographic" | "volume">("orthographic");
+  const [activeTab, setActiveTab] = useState<"orthographic" | "volume" | "media" | "analysis">("orthographic");
   const [activeMasks, setActiveMasks] = useState<Record<string, boolean>>({});
   
   const searchParams = useSearchParams();
@@ -87,6 +87,16 @@ useEffect(() => {
     );
   }
 
+  const getPageTitle = () => {
+    const titleMap: Record<string, string> = {
+      orthographic: "Orthographic Viewer",
+      volume: "Volume Viewer",
+      media: "Media",
+      analysis: "Analysis",
+    };
+    return titleMap[activeTab] || "Viewer";
+  };
+
   return (
     <SidebarProvider>
       <div className="flex h-screen w-full overflow-hidden">
@@ -107,7 +117,7 @@ useEffect(() => {
                     <BreadcrumbSeparator className="hidden md:block" />
                     <BreadcrumbItem>
                       <BreadcrumbPage>
-                        {activeTab === "volume" ? "Volume Viewer" : "Orthographic Viewer"}
+                        {getPageTitle()}
                       </BreadcrumbPage>
                     </BreadcrumbItem>
                   </BreadcrumbList>
@@ -121,7 +131,7 @@ useEffect(() => {
               animate={{ y: 0, opacity: 1 }}
             >
               <div className="flex p-0.5 rounded-full border backdrop-blur-md bg-white/80 dark:bg-black/80 border-gray-300 dark:border-gray-800">
-                {["orthographic", "volume"].map((tab) => (
+                {["orthographic", "volume", "media", "analysis"].map((tab) => (
                   <Button
                     key={tab}
                     variant="ghost"
@@ -132,7 +142,7 @@ useEffect(() => {
                         ? "bg-gray-200 text-black dark:bg-gray-800 dark:text-white"
                         : "text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-white"
                     )}
-                    onClick={() => setActiveTab(tab as "orthographic" | "volume")}
+                    onClick={() => setActiveTab(tab as "orthographic" | "volume" | "media" | "analysis")}
                   >
                     {tab.toUpperCase()}
                   </Button>
@@ -161,7 +171,7 @@ useEffect(() => {
                         activeMasks={activeMasks} // Pass checkbox state
                       />
                     </Suspense>
-                  ) : (
+                  ) : activeTab === "volume" ? (
                     <Suspense fallback={<div>Loading Volume Viewer...</div>}>
                       <VolumeViewer
                         brightfieldBlobUrl={dataset.brightfieldBlobUrl}
@@ -173,7 +183,15 @@ useEffect(() => {
                         activeMasks={activeMasks} // Pass checkbox state
                       />
                     </Suspense>
-                  )}
+                  ) : activeTab === "media" ? (
+                    <div className="flex items-center justify-center h-full">
+                      <p className="text-gray-500 dark:text-gray-400">Media content coming soon...</p>
+                    </div>
+                  ) : activeTab === "analysis" ? (
+                    <div className="flex items-center justify-center h-full">
+                      <p className="text-gray-500 dark:text-gray-400">Analysis content coming soon...</p>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
