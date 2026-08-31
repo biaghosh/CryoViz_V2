@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import Image from "next/image";
+import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 
 type MediaType = "still" | "movie";
 
@@ -34,9 +35,19 @@ export default function ClientHome() {
   const [activeTab, setActiveTab] = useState<"orthographic" | "volume" | "media" | "analysis">("orthographic");
   const [activeMasks, setActiveMasks] = useState<Record<string, boolean>>({});
   const [mediaType, setMediaType] = useState<MediaType>("still");
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const imageContainerRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   
   const searchParams = useSearchParams();
   const datasetId = searchParams.get("datasetId");
+
+  const MIN_ZOOM = 1;
+  const MAX_ZOOM = 5;
+  const ZOOM_STEP = 0.2;
 
  // Inside ClientHome.tsx useEffect
 useEffect(() => {
@@ -68,6 +79,72 @@ useEffect(() => {
     enabled: !!datasetId,
     staleTime: 5 * 60 * 1000, 
   });
+
+  // Handle mouse wheel zoom for image
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (mediaType !== "still" || !imageContainerRef.current) return;
+    
+    e.preventDefault();
+    
+    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+    const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom + delta));
+    
+    setZoom(newZoom);
+  };
+
+  // Handle mouse down for panning
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (mediaType !== "still" || zoom === MIN_ZOOM) return;
+    
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+  };
+
+  // Handle mouse move for panning
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDragging || !imageContainerRef.current) return;
+    
+    const newX = e.clientX - dragStart.x;
+    const newY = e.clientY - dragStart.y;
+    
+    // Calculate boundary constraints
+    const container = imageContainerRef.current;
+    const maxPanX = (container.offsetWidth * (zoom - 1)) / 2;
+    const maxPanY = (container.offsetHeight * (zoom - 1)) / 2;
+    
+    setPan({
+      x: Math.max(-maxPanX, Math.min(maxPanX, newX)),
+      y: Math.max(-maxPanY, Math.min(maxPanY, newY)),
+    });
+  };
+
+  // Handle mouse up for panning
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  // Reset zoom and pan
+  const handleResetZoom = () => {
+    setZoom(MIN_ZOOM);
+    setPan({ x: 0, y: 0 });
+  };
+
+  // Handle zoom in button
+  const handleZoomIn = () => {
+    setZoom((prev) => Math.min(MAX_ZOOM, prev + ZOOM_STEP));
+  };
+
+  // Handle zoom out button
+  const handleZoomOut = () => {
+    setZoom((prev) => Math.max(MIN_ZOOM, prev - ZOOM_STEP));
+  };
+
+  // Reset pan when zoom changes to MIN_ZOOM
+  useEffect(() => {
+    if (zoom === MIN_ZOOM) {
+      setPan({ x: 0, y: 0 });
+    }
+  }, [zoom]);
 
  if (isLoading) {
     return (
@@ -203,7 +280,11 @@ useEffect(() => {
                                   "border-input text-primary focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:bg-input/30 aspect-square size-4 shrink-0 rounded-full border shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px]",
                                   mediaType === type ? "bg-blue-600 border-blue-600" : "bg-white dark:bg-gray-700"
                                 )}
-                                onClick={() => setMediaType(type as MediaType)}
+                                onClick={() => {
+                                  setMediaType(type as MediaType);
+                                  setZoom(MIN_ZOOM);
+                                  setPan({ x: 0, y: 0 });
+                                }}
                               >
                                 {mediaType === type && (
                                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-circle absolute size-2">
@@ -219,18 +300,85 @@ useEffect(() => {
                         </div>
                       </div>
                       {mediaType === "still" ? (
-                        <div className="flex items-center justify-center h-full">
-                          <Image
-                            src="https://bivlargefiles.blob.core.windows.net/images/cryovizweb_still.png"
-                            alt="Still media"
-                            fill
-                            className="object-contain"
-                            priority
-                          />
-                        </div>
+                        <>
+                          <div
+                            ref={imageContainerRef}
+                            className="flex items-center justify-center h-full overflow-hidden bg-gray-100 dark:bg-gray-900 cursor-grab active:cursor-grabbing"
+                            onWheel={handleWheel}
+                            onMouseDown={handleMouseDown}
+                            onMouseMove={handleMouseMove}
+                            onMouseUp={handleMouseUp}
+                            onMouseLeave={handleMouseUp}
+                          >
+                            <div
+                              className="relative w-full h-full"
+                              style={{
+                                transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+                                transformOrigin: "center",
+                                transition: isDragging ? "none" : "transform 0.1s ease-out",
+                              }}
+                            >
+                              <Image
+                                src="https://bivlargefiles.blob.core.windows.net/images/cryovizweb_still.png"
+                                alt="Still media"
+                                fill
+                                className="object-contain pointer-events-none"
+                                priority
+                              />
+                            </div>
+                          </div>
+
+                          {/* Zoom Controls */}
+                          <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg p-3 shadow-lg absolute bottom-4 left-4 z-10 flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleZoomOut}
+                              disabled={zoom <= MIN_ZOOM}
+                              className="flex items-center gap-1"
+                            >
+                              <ZoomOut size={16} />
+                              Zoom Out
+                            </Button>
+                            <div className="flex items-center gap-2 px-3 py-1 bg-gray-100 dark:bg-gray-700 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300">
+                              {Math.round(zoom * 100)}%
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleZoomIn}
+                              disabled={zoom >= MAX_ZOOM}
+                              className="flex items-center gap-1"
+                            >
+                              <ZoomIn size={16} />
+                              Zoom In
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleResetZoom}
+                              disabled={zoom === MIN_ZOOM && pan.x === 0 && pan.y === 0}
+                              className="flex items-center gap-1"
+                            >
+                              <RotateCcw size={16} />
+                              Reset
+                            </Button>
+                          </div>
+                        </>
                       ) : (
-                        <div className="flex items-center justify-center h-full">
-                          <p className="text-gray-500 dark:text-gray-400">Movie media content coming soon...</p>
+                        <div className="flex items-center justify-center h-full bg-gray-100 dark:bg-gray-900">
+                          <video
+                            ref={videoRef}
+                            controls
+                            className="h-full max-w-full object-contain"
+                            style={{ maxHeight: "100%", maxWidth: "100%" }}
+                          >
+                            <source
+                              src="https://bivlargefiles.blob.core.windows.net/videos/cyovizweb_movie.mp4"
+                              type="video/mp4"
+                            />
+                            Your browser does not support the video tag.
+                          </video>
                         </div>
                       )}
                     </div>
