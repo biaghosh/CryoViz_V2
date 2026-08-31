@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
+import Image from "next/image";
 
 type MediaType = "still" | "movie";
 
@@ -217,9 +218,21 @@ useEffect(() => {
                           ))}
                         </div>
                       </div>
-                      <div className="flex items-center justify-center h-full">
-                        <p className="text-gray-500 dark:text-gray-400">{mediaType.charAt(0).toUpperCase() + mediaType.slice(1)} media content coming soon...</p>
-                      </div>
+                      {mediaType === "still" ? (
+                        <div className="flex items-center justify-center h-full">
+                          <Image
+                            src="https://bivlargefiles.blob.core.windows.net/images/cryovizweb_still.png"
+                            alt="Still media"
+                            fill
+                            className="object-contain"
+                            priority
+                          />
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center h-full">
+                          <p className="text-gray-500 dark:text-gray-400">Movie media content coming soon...</p>
+                        </div>
+                      )}
                     </div>
                   ) : activeTab === "analysis" ? (
                     <div className="flex items-center justify-center h-full">
