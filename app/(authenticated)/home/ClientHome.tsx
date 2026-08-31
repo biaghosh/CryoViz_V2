@@ -24,12 +24,15 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 
+type MediaType = "still" | "movie";
+
 export default function ClientHome() {
 
 
 
   const [activeTab, setActiveTab] = useState<"orthographic" | "volume" | "media" | "analysis">("orthographic");
   const [activeMasks, setActiveMasks] = useState<Record<string, boolean>>({});
+  const [mediaType, setMediaType] = useState<MediaType>("still");
   
   const searchParams = useSearchParams();
   const datasetId = searchParams.get("datasetId");
@@ -153,7 +156,7 @@ useEffect(() => {
            
 
             <div className="flex flex-1 flex-col gap-4 p-4 pt-0 overflow-hidden">
-              <div className="bg-muted/50 min-h-0 flex-1 rounded-xl overflow-hidden">
+              <div className="bg-muted/50 min-h-0 flex-1 rounded-xl overflow-hidden relative">
                 <div className="p-4 h-full overflow-hidden">
                   {activeTab === "orthographic" ? (
                     <Suspense fallback={<div>Loading Orthographic Viewer...</div>}>
@@ -184,8 +187,39 @@ useEffect(() => {
                       />
                     </Suspense>
                   ) : activeTab === "media" ? (
-                    <div className="flex items-center justify-center h-full">
-                      <p className="text-gray-500 dark:text-gray-400">Media content coming soon...</p>
+                    <div className="relative w-full h-full">
+                      <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg p-3 shadow-lg absolute top-4 left-4 z-10">
+                        <div className="text-sm font-medium mb-3 text-gray-700 dark:text-gray-300">Media Type</div>
+                        <div role="radiogroup" className="flex gap-4">
+                          {["still", "movie"].map((type) => (
+                            <div key={type} className="flex items-center space-x-2">
+                              <button
+                                type="button"
+                                role="radio"
+                                aria-checked={mediaType === type}
+                                value={type}
+                                className={cn(
+                                  "border-input text-primary focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:bg-input/30 aspect-square size-4 shrink-0 rounded-full border shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px]",
+                                  mediaType === type ? "bg-blue-600 border-blue-600" : "bg-white dark:bg-gray-700"
+                                )}
+                                onClick={() => setMediaType(type as MediaType)}
+                              >
+                                {mediaType === type && (
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-circle absolute size-2">
+                                    <circle cx="12" cy="12" r="1"></circle>
+                                  </svg>
+                                )}
+                              </button>
+                              <label className="flex items-center gap-2 font-medium select-none text-sm cursor-pointer text-gray-700 dark:text-gray-300">
+                                {type.charAt(0).toUpperCase() + type.slice(1)}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-center h-full">
+                        <p className="text-gray-500 dark:text-gray-400">{mediaType.charAt(0).toUpperCase() + mediaType.slice(1)} media content coming soon...</p>
+                      </div>
                     </div>
                   ) : activeTab === "analysis" ? (
                     <div className="flex items-center justify-center h-full">
