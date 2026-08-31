@@ -24,7 +24,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import Image from "next/image";
-import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, Download } from "lucide-react";
 
 type MediaType = "still" | "movie";
 
@@ -39,7 +39,13 @@ export default function ClientHome() {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [analysisZoom, setAnalysisZoom] = useState(1);
+  const [analysisPan, setAnalysisPan] = useState({ x: 0, y: 0 });
+  const [analysisIsDragging, setAnalysisIsDragging] = useState(false);
+  const [analysisDragStart, setAnalysisDragStart] = useState({ x: 0, y: 0 });
   const imageContainerRef = useRef<HTMLDivElement>(null);
+  const analysisContainerRef = useRef<HTMLDivElement>(null);
+  const analysisChartRef = useRef<HTMLDivElement>(null);
   
   const searchParams = useSearchParams();
   const datasetId = searchParams.get("datasetId");
@@ -144,6 +150,81 @@ useEffect(() => {
       setPan({ x: 0, y: 0 });
     }
   }, [zoom]);
+
+  // Analysis Chart Zoom & Pan Handlers
+  const handleAnalysisWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (!analysisContainerRef.current) return;
+    
+    e.preventDefault();
+    
+    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+    const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, analysisZoom + delta));
+    
+    setAnalysisZoom(newZoom);
+  };
+
+  const handleAnalysisMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (analysisZoom === MIN_ZOOM) return;
+    
+    setAnalysisIsDragging(true);
+    setAnalysisDragStart({ x: e.clientX - analysisPan.x, y: e.clientY - analysisPan.y });
+  };
+
+  const handleAnalysisMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!analysisIsDragging || !analysisContainerRef.current) return;
+    
+    const newX = e.clientX - analysisDragStart.x;
+    const newY = e.clientY - analysisDragStart.y;
+    
+    const container = analysisContainerRef.current;
+    const maxPanX = (container.offsetWidth * (analysisZoom - 1)) / 2;
+    const maxPanY = (container.offsetHeight * (analysisZoom - 1)) / 2;
+    
+    setAnalysisPan({
+      x: Math.max(-maxPanX, Math.min(maxPanX, newX)),
+      y: Math.max(-maxPanY, Math.min(maxPanY, newY)),
+    });
+  };
+
+  const handleAnalysisMouseUp = () => {
+    setAnalysisIsDragging(false);
+  };
+
+  const handleAnalysisResetZoom = () => {
+    setAnalysisZoom(MIN_ZOOM);
+    setAnalysisPan({ x: 0, y: 0 });
+  };
+
+  const handleAnalysisZoomIn = () => {
+    setAnalysisZoom((prev) => Math.min(MAX_ZOOM, prev + ZOOM_STEP));
+  };
+
+  const handleAnalysisZoomOut = () => {
+    setAnalysisZoom((prev) => Math.max(MIN_ZOOM, prev - ZOOM_STEP));
+  };
+
+  const handleDownloadChart = async () => {
+    try {
+      const response = await fetch("https://bivlargefiles.blob.core.windows.net/images/cryovizweb_analysis.svg");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "cryoviz_analysis.svg";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Error downloading chart:", error);
+    }
+  };
+
+  useEffect(() => {
+    if (analysisZoom === MIN_ZOOM) {
+      setAnalysisPan({ x: 0, y: 0 });
+    }
+  }, [analysisZoom]);
 
  if (isLoading) {
     return (
@@ -380,8 +461,78 @@ useEffect(() => {
                       )}
                     </div>
                   ) : activeTab === "analysis" ? (
-                    <div className="flex items-center justify-center h-full">
-                      <p className="text-gray-500 dark:text-gray-400">Analysis content coming soon...</p>
+                    <div className="relative w-full h-full">
+                      <div
+                        ref={analysisContainerRef}
+                        className="flex items-center justify-center h-full overflow-hidden bg-gray-100 dark:bg-gray-900 cursor-grab active:cursor-grabbing"
+                        onWheel={handleAnalysisWheel}
+                        onMouseDown={handleAnalysisMouseDown}
+                        onMouseMove={handleAnalysisMouseMove}
+                        onMouseUp={handleAnalysisMouseUp}
+                        onMouseLeave={handleAnalysisMouseUp}
+                      >
+                        <div
+                          ref={analysisChartRef}
+                          className="relative w-full h-full"
+                          style={{
+                            transform: `scale(${analysisZoom}) translate(${analysisPan.x / analysisZoom}px, ${analysisPan.y / analysisZoom}px)`,
+                            transformOrigin: "center",
+                            transition: analysisIsDragging ? "none" : "transform 0.1s ease-out",
+                          }}
+                        >
+                          <img
+                            src="https://bivlargefiles.blob.core.windows.net/images/cryovizweb_analysis.svg"
+                            alt="Analysis Chart"
+                            className="w-full h-full object-contain pointer-events-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Analysis Chart Controls */}
+                      <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg p-3 shadow-lg absolute bottom-4 left-4 z-10 flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleAnalysisZoomOut}
+                          disabled={analysisZoom <= MIN_ZOOM}
+                          className="flex items-center gap-1"
+                        >
+                          <ZoomOut size={16} />
+                          Zoom Out
+                        </Button>
+                        <div className="flex items-center gap-2 px-3 py-1 bg-gray-100 dark:bg-gray-700 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300">
+                          {Math.round(analysisZoom * 100)}%
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleAnalysisZoomIn}
+                          disabled={analysisZoom >= MAX_ZOOM}
+                          className="flex items-center gap-1"
+                        >
+                          <ZoomIn size={16} />
+                          Zoom In
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleAnalysisResetZoom}
+                          disabled={analysisZoom === MIN_ZOOM && analysisPan.x === 0 && analysisPan.y === 0}
+                          className="flex items-center gap-1"
+                        >
+                          <RotateCcw size={16} />
+                          Reset
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleDownloadChart}
+                          className="flex items-center gap-1"
+                        >
+                          <Download size={16} />
+                          Download
+                        </Button>
+                      </div>
                     </div>
                   ) : null}
                 </div>
